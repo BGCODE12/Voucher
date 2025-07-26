@@ -1,0 +1,13 @@
+:root {
+  --page-max-width: 700px;
+  --page-radius: 24px;
+  --page-margin-top: 32px;
+  --page-margin-bottom: 24px;
+  --card-shadow: 0 8px 32px #b39ddb33, 0 2px 8px #7c3aed22;
+  --input-radius: 18px;
+  --btn-radius: 16px;
+  --btn-min-height: 48px;
+  --title-size: 2rem;
+  --input-size: 1.18rem;
+  --btn-size: 1.15rem;
+} 
