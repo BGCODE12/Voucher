@@ -1,5 +1,5 @@
 <template>
-  <v-card class="voucher-page-card full-page-card" :style="`min-height: 100dvh; width: 100vw; max-width: 600px; box-shadow: var(--card-shadow); border-radius: var(--page-radius); padding: 32px 0; display: flex; flex-direction: column; justify-content: flex-start; align-items: center;`">
+  <v-card class="voucher-page-card full-page-card" :style="`min-height: 100vh; width: 100vw; max-width: 600px; box-shadow: var(--card-shadow); border-radius: var(--page-radius); padding: 32px 0; display: flex; flex-direction: column; justify-content: flex-start; align-items: center;`">
     <v-card-title class="voucher-page-title">فحص القسيمة</v-card-title>
     <v-card-text class="voucher-card-content">
       <v-text-field
@@ -56,7 +56,24 @@
 <script setup>
 import { ref, watch, nextTick, onBeforeUnmount } from 'vue';
 import { Html5Qrcode } from 'html5-qrcode';
+import { getFirestore, collection, query, where, getDocs, updateDoc, doc } from "firebase/firestore";
+import { initializeApp } from "firebase/app";
 
+// ✅ Firebase Config (نفس صفحة التوليد)
+const firebaseConfig = {
+  apiKey: "AIzaSyDUmp3K-XKd0-hKj1oE_9ndE0nDWsawiZI",
+  authDomain: "voicherscanner.firebaseapp.com",
+  projectId: "voicherscanner",
+  storageBucket: "voicherscanner.appspot.com",
+  messagingSenderId: "542304627737",
+  appId: "1:542304627737:web:a08dbf028310cccbc18e88"
+};
+
+// ✅ Init Firebase
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+// 🔄 متغيرات الحالة
 const voucherCode = ref('');
 const showScanner = ref(false);
 const result = ref({ status: null });
@@ -64,44 +81,56 @@ const snackbar = ref(false);
 const snackbarMsg = ref('');
 const snackbarColor = ref('success');
 
-// فحص القسيمة
-function checkVoucher() {
+// ✅ فحص القسيمة من Firestore
+async function checkVoucher() {
   if (!voucherCode.value) return;
-  const vouchers = JSON.parse(localStorage.getItem('vouchers') || '[]');
-  const found = vouchers.find(v => v.code === voucherCode.value);
-  if (!found) {
+
+  const q = query(collection(db, "vouchers"), where("code", "==", voucherCode.value));
+  const querySnapshot = await getDocs(q);
+
+  if (querySnapshot.empty) {
     result.value = { status: 'notfound' };
     snackbarMsg.value = 'القسيمة غير موجودة';
     snackbarColor.value = 'error';
     snackbar.value = true;
-  } else if (found.status === 'used') {
-    result.value = { status: 'used', voucher: found };
+    return;
+  }
+
+  const docSnap = querySnapshot.docs[0];
+  const voucher = docSnap.data();
+  voucher.docId = docSnap.id;
+
+  if (voucher.status === 'used') {
+    result.value = { status: 'used', voucher };
     snackbarMsg.value = 'هذه القسيمة استخدمت سابقًا';
     snackbarColor.value = 'warning';
     snackbar.value = true;
   } else {
-    result.value = { status: 'valid', voucher: found };
+    result.value = { status: 'valid', voucher };
     snackbarMsg.value = 'القسيمة صالحة ولم تُستخدم بعد';
     snackbarColor.value = 'success';
     snackbar.value = true;
   }
 }
 
-// تحديث حالة القسيمة
-function useVoucher() {
-  const vouchers = JSON.parse(localStorage.getItem('vouchers') || '[]');
-  const idx = vouchers.findIndex(v => v.code === voucherCode.value);
-  if (idx !== -1) {
-    vouchers[idx].status = 'used';
-    vouchers[idx].usedAt = new Date().toISOString();
-    localStorage.setItem('vouchers', JSON.stringify(vouchers));
-    result.value = { status: 'used', voucher: vouchers[idx] };
-    snackbarMsg.value = 'تم استخدام القسيمة بنجاح';
-    snackbarColor.value = 'success';
-    snackbar.value = true;
-  }
+// ✅ تحديث حالة القسيمة إلى "used"
+async function useVoucher() {
+  const voucher = result.value.voucher;
+  if (!voucher || !voucher.docId) return;
+
+  const docRef = doc(db, "vouchers", voucher.docId);
+  await updateDoc(docRef, {
+    status: 'used',
+    usedAt: new Date().toISOString()
+  });
+
+  result.value = { status: 'used', voucher: { ...voucher, status: 'used', usedAt: new Date().toISOString() } };
+  snackbarMsg.value = 'تم استخدام القسيمة بنجاح';
+  snackbarColor.value = 'success';
+  snackbar.value = true;
 }
 
+// ✅ QR Scanner logic
 let html5QrCodeInstance = null;
 
 function stopScanner() {
@@ -114,40 +143,37 @@ function stopScanner() {
   if (el) el.innerHTML = '';
 }
 
-watch(
-  showScanner,
-  async (val) => {
-    if (val) {
-      await nextTick();
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      stopScanner();
-      html5QrCodeInstance = new Html5Qrcode('qr-reader');
-      try {
-        await html5QrCodeInstance.start(
-          { facingMode: 'environment' },
-          { fps: 10, qrbox: 200 },
-          (decodedText) => {
-            voucherCode.value = decodedText;
-            showScanner.value = false;
-            checkVoucher();
-            stopScanner();
-          },
-          () => {}
-        );
-      } catch (e) {
-        console.error('خطأ أثناء تهيئة الكاميرا:', e);
-      }
-    } else {
-      stopScanner();
+watch(showScanner, async (val) => {
+  if (val) {
+    await nextTick();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    stopScanner();
+    html5QrCodeInstance = new Html5Qrcode('qr-reader');
+    try {
+      await html5QrCodeInstance.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: 200 },
+        (decodedText) => {
+          voucherCode.value = decodedText;
+          showScanner.value = false;
+          checkVoucher();
+          stopScanner();
+        },
+        () => {}
+      );
+    } catch (e) {
+      console.error('خطأ أثناء تهيئة الكاميرا:', e);
     }
-  },
-  { immediate: true }
-);
+  } else {
+    stopScanner();
+  }
+}, { immediate: true });
 
 onBeforeUnmount(() => {
   stopScanner();
 });
 </script>
+
 
 <style scoped>
 .voucher-page-card {

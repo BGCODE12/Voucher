@@ -17,18 +17,25 @@
       <v-snackbar v-model="snackbar" color="success" :timeout="2000" top>
         تم توليد القسيمة بنجاح!
       </v-snackbar>
+
       <div v-if="voucher" class="voucher-page-result">
-        <div id="voucher-pdf-content" class="voucher-preview mobile-voucher-preview voucher-page-preview">
-          <div class="voucher-title">Discount Voucher</div>
-          <div class="voucher-row"><span>Code:</span> <span class="voucher-code">{{ voucher.code }}</span></div>
-          <div v-if="voucher.customerName" class="voucher-row"><span>Customer:</span> <span>{{ voucher.customerName }}</span></div>
-          <div class="voucher-row"><span>Issued At:</span> <span>{{ formatDate(voucher.issuedAt) }}</span></div>
-          <div class="voucher-qr">
-            <qrcode-vue :value="voucher.code" :size="100" />
+        <div class="styled-voucher" id="voucher-pdf-content">
+          <div class="voucher-left">
+            <qrcode-vue :value="voucher.code" :size="90" />
           </div>
-          <div class="voucher-note">Please present this voucher at payment</div>
+          <div class="voucher-right">
+            <div class="voucher-heading">ضيافة أبعاد</div>
+            <div class="voucher-text">
+              إنَّ حامل هذا الكوبون ضيفٌ كريم لدى إدارة الفريق، لذا توجّه الإدارة كافة كوادر الضيافة لتقديم أرقى مستويات الخدمة والعناية، بما يليق بمقامه الكريم
+            </div>
+            <div class="voucher-code-text">رمز القسيمة: {{ voucher.code }}</div>
+            <div class="voucher-date">تاريخ الإصدار: {{ formatDate(voucher.issuedAt) }}</div>
+            <div class="voucher-customer" v-if="voucher.customerName">اسم الزبون: {{ voucher.customerName }}</div>
+          </div>
         </div>
+
         <v-btn color="secondary" class="mt-2 voucher-page-btn" block @click="exportPDF">تصدير PDF</v-btn>
+        <v-btn color="success" class="mt-2 voucher-page-btn" block @click="sharePDF">مشاركة القسيمة</v-btn>
       </div>
     </v-card-text>
   </v-card>
@@ -39,27 +46,45 @@ import { ref } from 'vue';
 import QrcodeVue from 'qrcode.vue';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
-import { Filesystem, Directory } from '@capacitor/filesystem';
+import { getFirestore, collection, addDoc } from "firebase/firestore";
+import { initializeApp } from "firebase/app";
+
+// Firebase Config
+const firebaseConfig = {
+  apiKey: "AIzaSyDUmp3K-XKd0-hKj1oE_9ndE0nDWsawiZI",
+  authDomain: "voicherscanner.firebaseapp.com",
+  projectId: "voicherscanner",
+  storageBucket: "voicherscanner.appspot.com",
+  messagingSenderId: "542304627737",
+  appId: "1:542304627737:web:a08dbf028310cccbc18e88"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
 
 const customerName = ref('');
 const voucher = ref(null);
-const snackbar = ref(false); // لإظهار رسالة النجاح
+const snackbar = ref(false);
 
-// توليد UUID عشوائي
 function generateUUID() {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-    const r = (Math.random() * 16) | 0,
-      v = c === 'x' ? r : (r & 0x3) | 0x8;
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    const v = c == 'x' ? r : (r & 0x3 | 0x8);
     return v.toString(16);
   });
 }
 
 function formatDate(date) {
-  return new Date(date).toLocaleString('en-GB');
+  return new Date(date).toLocaleDateString('ar-EG', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 }
 
-// توليد القسيمة وحفظها
-function generateVoucher() {
+async function generateVoucher() {
   const code = generateUUID();
   const issuedAt = new Date().toISOString();
   const newVoucher = {
@@ -69,46 +94,85 @@ function generateVoucher() {
     customerName: customerName.value,
     usedAt: null,
   };
-  const vouchers = JSON.parse(localStorage.getItem('vouchers') || '[]');
-  vouchers.push(newVoucher);
-  localStorage.setItem('vouchers', JSON.stringify(vouchers));
+
+  await addDoc(collection(db, "vouchers"), newVoucher);
+
   voucher.value = newVoucher;
   customerName.value = '';
-  snackbar.value = true; // إظهار رسالة النجاح
+  snackbar.value = true;
 }
 
-// تصدير القسيمة PDF
-async function exportPDF() {
-  const element = document.getElementById('voucher-pdf-content');
-  const canvas = await html2canvas(element, { scale: 2 });
-  const imgData = canvas.toDataURL('image/png');
-  const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-  const imgProps = pdf.getImageProperties(imgData);
-  const pdfWidth = 180;
-  const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
-  const x = (210 - pdfWidth) / 2;
-  const y = 40;
-  pdf.addImage(imgData, 'PNG', x, y, pdfWidth, pdfHeight);
-  const pdfOutput = pdf.output('arraybuffer');
-  const base64 = btoa(
-    new Uint8Array(pdfOutput)
-      .reduce((data, byte) => data + String.fromCharCode(byte), '')
-  );
-  await Filesystem.writeFile({
-    path: `voucher-${voucher.value.code}.pdf`,
-    data: base64,
-    directory: Directory.Documents,
+async function exportPDF(isShare = false) {
+  if (!voucher.value) {
+    alert('يرجى توليد قسيمة أولاً');
+    return;
+  }
+  
+  // Select the voucher DOM element
+  const voucherElement = document.getElementById('voucher-pdf-content');
+  if (!voucherElement) {
+    alert('لم يتم العثور على محتوى القسيمة.');
+    return;
+  }
+
+  // Use html2canvas to capture the voucher as image
+  const canvas = await html2canvas(voucherElement, {
+    scale: 2,
+    useCORS: true,
+    backgroundColor: '#ffffff',
+    scrollY: -window.scrollY,
   });
-  alert('PDF saved to Documents folder!');
+  const imgData = canvas.toDataURL('image/png');
+
+  const pdf = new jsPDF({
+    unit: 'pt',
+    format: 'a4',
+    orientation: 'portrait',
+  });
+
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+
+  // Calculate image dimensions to fit inside PDF page
+  const imgProps = pdf.getImageProperties(imgData);
+  const pdfWidth = pageWidth - 80; // margins: 40 left + 40 right
+  const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+
+  // Add image to PDF (centered horizontally)
+  pdf.addImage(imgData, 'PNG', 40, 60, pdfWidth, pdfHeight);
+
+  if (isShare && navigator.canShare && navigator.canShare({ files: [] })) {
+    try {
+      // Convert PDF to Blob
+      const pdfBlob = pdf.output('blob');
+      const file = new File([pdfBlob], `voucher-${voucher.value.code}.pdf`, {
+        type: 'application/pdf',
+      });
+
+      await navigator.share({
+        title: 'قسيمة ضيافة أبعاد',
+        text: 'قسيمتك جاهزة!',
+        files: [file],
+      });
+    } catch (e) {
+      alert('فشل في مشاركة الملف: ' + e.message);
+    }
+  } else {
+    pdf.save(`voucher-${voucher.value.code}.pdf`);
+  }
+}
+
+function sharePDF() {
+  if (!navigator.share || !navigator.canShare) {
+    alert("جهازك لا يدعم مشاركة الملفات.");
+    return;
+  }
+  exportPDF(true);
 }
 </script>
 
+
 <style scoped>
-.voucher-page-card {
-  box-shadow: var(--card-shadow);
-  border-radius: var(--page-radius);
-  padding-bottom: var(--page-margin-bottom);
-}
 .voucher-page-title {
   color: #7c3aed;
   font-size: var(--title-size);
@@ -117,6 +181,9 @@ async function exportPDF() {
   margin-bottom: 24px;
   letter-spacing: 0.5px;
   text-align: center;
+}
+.voucher-card-content {
+  width: 100%;
 }
 .voucher-page-input {
   font-size: var(--input-size);
@@ -141,15 +208,53 @@ async function exportPDF() {
   flex-direction: column;
   align-items: center;
 }
-.voucher-page-preview {
-  box-shadow: 0 2px 16px #b39ddb33, 0 1px 4px #7c3aed11;
-  border-radius: 20px;
-  margin-bottom: 18px;
-}
-.voucher-card-content {
+.styled-voucher {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  background-color: #f0f0f0;
+  padding: 16px;
+  border-radius: 16px;
   width: 100%;
+  max-width: 600px;
+  height: auto;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  font-family: 'Tajawal', 'Cairo', sans-serif;
   box-sizing: border-box;
-  padding-left: 16px;
-  padding-right: 16px;
+  direction: rtl;
+  text-align: right;
 }
-</style> 
+.voucher-left {
+  flex: 0 0 120px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 8px;
+}
+.voucher-right {
+  flex: 1;
+  padding: 0 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.voucher-heading {
+  font-size: 16px;
+  font-weight: bold;
+  color: #6d28d9;
+  margin-bottom: 8px;
+}
+.voucher-text {
+  font-size: 12px;
+  color: #333;
+  margin-bottom: 12px;
+  line-height: 1.6;
+}
+.voucher-code-text,
+.voucher-date,
+.voucher-customer {
+  font-size: 13px;
+  color: #555;
+  margin-bottom: 6px;
+}
+</style>
