@@ -25,7 +25,7 @@ const $route = useRoute();
 
 <style scoped>
 .mobile-nav {
-  border-top: 1.5px solid #e0e0e0;
+  border-top: 1.5px solid #724343;
   box-shadow: 0 -2px 16px #b39ddb33;
   height: 60px;
   padding-bottom: env(safe-area-inset-bottom);
@@ -46,7 +46,7 @@ const $route = useRoute();
   opacity: 1;
 }
 .v-btn--active .v-icon {
-  color: #fff !important;
+  color: #f59797 !important;
   background: #7c3aed;
   border-radius: 50%;
   padding: 6px;
@@ -54,7 +54,7 @@ const $route = useRoute();
 }
 .v-btn .v-icon {
   color: #7c3aed !important;
-  opacity: 0.7;
+  
   background: #ede7f6;
   border-radius: 50%;
   padding: 6px;
